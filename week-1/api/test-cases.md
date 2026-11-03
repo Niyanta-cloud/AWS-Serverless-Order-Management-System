@@ -1,6 +1,6 @@
 # API demonstration cases
 
-Record actual status codes and responses after deploying in `../tests/test-results.md`.
+Record actual status codes and responses after deploying in `../../docs/testing/test-results.md`.
 
 | Case | Request | Expected |
 |---|---|---|
@@ -8,6 +8,9 @@ Record actual status codes and responses after deploying in `../tests/test-resul
 | Create missing customer | POST without `customerId` | 400 VALIDATION_ERROR |
 | Retrieve existing | GET created ID | 200 and matching order |
 | Retrieve missing | GET unknown ID | 404 ORDER_NOT_FOUND |
+| Delete existing | DELETE created ID | 200 deletion confirmation |
+| Delete missing | DELETE unknown ID | 404 ORDER_NOT_FOUND |
+| Retrieve after delete | GET deleted ID | 404 ORDER_NOT_FOUND |
 | List customer orders | GET with `customerId` | 200, items and optional cursor |
 | List without customer | GET without query | 400 VALIDATION_ERROR |
 | Valid state change | PENDING/version 1 to CONFIRMED | 200 and updated version |

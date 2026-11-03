@@ -16,6 +16,10 @@ See `endpoints.md` for the endpoint table. All requests use HTTPS and AWS Signat
 
 `GET /orders/{orderId}` returns the order or `404`.
 
+## Delete
+
+`DELETE /orders/{orderId}` permanently removes that order item from DynamoDB. It returns `200` with a confirmation and the deleted ID, or `404 ORDER_NOT_FOUND` if the order does not exist. This operation cannot be undone through the API.
+
 ## List
 
 `GET /orders?customerId=C1001&limit=20&nextToken=...` returns `items` and optionally `nextToken`. `limit` is from 1 through 100 and defaults to 20. The token is an opaque, URL-safe encoding of the DynamoDB query cursor. Results are newest first. The GSI is eventually consistent.

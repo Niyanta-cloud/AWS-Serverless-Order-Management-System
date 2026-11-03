@@ -6,6 +6,7 @@ All endpoints require AWS IAM SigV4 authorization.
 |---|---|---|
 | `POST /orders` | Create an order | `201` |
 | `GET /orders/{orderId}` | Get one order | `200` |
+| `DELETE /orders/{orderId}` | Permanently delete an order | `200` |
 | `GET /orders?customerId=...` | List a customer's orders | `200` |
 | `PATCH /orders/{orderId}/status` | Change order state | `200` |
 

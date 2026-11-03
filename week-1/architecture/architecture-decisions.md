@@ -12,9 +12,9 @@ The system's access patterns are known and key-oriented. DynamoDB provides manag
 
 The base key supports direct order lookup by ID. A GSI supports listing by customer and creation time. A table scan was rejected because its work grows with all table items even when one customer's data is requested. The trade-off is extra index storage/write work and eventual consistency on GSI reads.
 
-## Three functions
+## Four functions
 
-Create, read/list, and status update functions separate responsibilities and allow distinct execution roles. A single function/router would reduce deployment resources but combine permissions and code paths. The separate functions share a small Python module for consistent validation and data access.
+Create, read/list, status update, and delete functions separate responsibilities and allow distinct execution roles. The delete function receives only `dynamodb:DeleteItem` access. A single function/router would reduce deployment resources but combine permissions and code paths. The separate functions share a small Python module for consistent validation and data access.
 
 ## Lifecycle and concurrency
 
