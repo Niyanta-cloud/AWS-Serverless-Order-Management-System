@@ -1,0 +1,7 @@
+{
+  "customerId": "C1001",
+  "items": [
+    {"productId": "P100", "quantity": 2}
+  ],
+  "totalAmount": 49.98
+}
