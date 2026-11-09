@@ -1,3 +1,5 @@
+# INPUT SETTINGS
+# These variables let the project name, region, and log retention be configured.
 variable "aws_region" {
   description = "AWS region for the demo stack."
   type        = string

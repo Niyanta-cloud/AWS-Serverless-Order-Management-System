@@ -1,4 +1,8 @@
-"""Send a SigV4-signed request to the OrderFlow API (stdlib + boto3/botocore)."""
+"""Send a SigV4-signed request to the OrderFlow API (stdlib + boto3/botocore).
+
+This is a local CLI client, not a Lambda function. It uses the selected AWS CLI
+profile to sign API Gateway requests; API Gateway then checks IAM invoke access.
+"""
 import argparse
 import json
 import sys
@@ -12,6 +16,8 @@ from botocore.awsrequest import AWSRequest
 
 
 def main():
+    # COMMAND-LINE INPUT
+    # Read the HTTP method, API URL, and optional JSON request body.
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("method", choices=["GET", "POST", "PATCH", "DELETE"])
     parser.add_argument("url", help="Full API URL, including path and query string")
@@ -22,6 +28,8 @@ def main():
                             help="Read the JSON body from standard input")
     args = parser.parse_args()
 
+    # REQUEST BODY
+    # Accept JSON directly, from a file, or piped from PowerShell stdin.
     body = args.body
     if args.body_file:
         with open(args.body_file, "r", encoding="utf-8") as source:
@@ -35,6 +43,8 @@ def main():
         else:
             body = raw_body.decode("utf-8-sig")
     payload = body.encode("utf-8") if body else b""
+    # AWS CLIENT IDENTITY
+    # boto3 loads credentials and region from AWS_PROFILE / the AWS CLI profile.
     session = boto3.Session()
     credentials = session.get_credentials()
     if credentials is None:
@@ -44,12 +54,16 @@ def main():
     if not region:
         parser.error("No AWS region configured; set AWS_DEFAULT_REGION or configure a region")
 
+    # SIGV4 REQUEST SIGNING
+    # Sign for the execute-api service; API Gateway uses IAM to authorize this caller.
     request = AWSRequest(method=args.method, url=args.url, data=payload,
                          headers={"Content-Type": "application/json"})
     SigV4Auth(credentials, "execute-api", region).add_auth(request)
     prepared = request.prepare()
     http_request = urllib.request.Request(prepared.url, data=payload or None,
                                           headers=dict(prepared.headers), method=args.method)
+    # SEND REQUEST AND SHOW RESULT
+    # Send HTTPS request and print the HTTP status plus the JSON response/error.
     try:
         with urllib.request.urlopen(http_request, timeout=30) as response:
             print(f"HTTP {response.status}")

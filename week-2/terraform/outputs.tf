@@ -1,3 +1,5 @@
+# TERRAFORM OUTPUTS
+# Print useful values after apply: API URL, table name, caller policy, and Lambda names.
 output "api_url" {
   description = "Base URL for the deployed AWS API stage."
   value       = "https://${aws_api_gateway_rest_api.orders.id}.execute-api.${var.aws_region}.amazonaws.com/${aws_api_gateway_stage.orders.stage_name}"

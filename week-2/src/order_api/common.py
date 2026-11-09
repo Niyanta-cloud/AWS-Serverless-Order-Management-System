@@ -1,4 +1,8 @@
-"""Shared API, validation, lifecycle, and DynamoDB helpers."""
+"""Shared API, validation, lifecycle, and DynamoDB helpers.
+
+The API Gateway handlers call these operations. Lambda accesses DynamoDB using
+its execution role; client credentials are never used for table access.
+"""
 import base64
 import json
 import logging
@@ -19,6 +23,8 @@ LOG.setLevel(logging.INFO)
 TABLE_NAME = os.environ["ORDERS_TABLE"]
 TABLE = boto3.resource("dynamodb").Table(TABLE_NAME)
 
+# BUSINESS RULES
+# Only these order status changes are accepted by the update operation.
 ALLOWED_TRANSITIONS = {
     "PENDING": {"CONFIRMED", "CANCELLED"},
     "CONFIRMED": {"PROCESSING", "CANCELLED"},
@@ -52,6 +58,8 @@ def json_default(value):
     raise TypeError(f"Cannot JSON encode {type(value).__name__}")
 
 
+# COMMON API RESPONSE AND ERROR HANDLING
+# Convert expected validation/database errors into safe JSON HTTP responses.
 def api_handler(event, operation):
     request_id = (event.get("requestContext") or {}).get("requestId", "unknown")
     try:
@@ -90,6 +98,8 @@ def required_string(value, field, max_length=128):
     return value.strip()
 
 
+# CREATE ORDER
+# Validate input, generate an order ID, then write with DynamoDB PutItem.
 def create_order(event):
     body = parse_json_body(event)
     customer_id = required_string(body.get("customerId"), "customerId")
@@ -132,6 +142,8 @@ def path_order_id(event):
     return required_string(unquote(params.get("orderId", "")), "orderId", 64)
 
 
+# GET ORDER BY ID
+# Read one item using the DynamoDB table's orderId primary key.
 def get_order(event):
     order_id = path_order_id(event)
     result = TABLE.get_item(Key={"orderId": order_id}, ConsistentRead=True)
@@ -141,6 +153,8 @@ def get_order(event):
     return 200, {"order": order}
 
 
+# DELETE ORDER
+# Permanently delete the order using orderId; return 404 if it does not exist.
 def delete_order(event):
     order_id = path_order_id(event)
     try:
@@ -180,6 +194,8 @@ def decode_token(token):
         raise ApiError(400, "VALIDATION_ERROR", "'nextToken' is invalid.")
 
 
+# LIST CUSTOMER ORDERS
+# Query CustomerCreatedIndex by customerId instead of scanning the whole table.
 def list_orders(event):
     params = event.get("queryStringParameters") or {}
     customer_id = required_string(params.get("customerId"), "customerId")
@@ -202,6 +218,8 @@ def list_orders(event):
     return 200, {"items": result.get("Items", []), "nextToken": encode_token(result.get("LastEvaluatedKey"))}
 
 
+# UPDATE ORDER STATUS SAFELY
+# Validate an allowed transition, then condition the write on current status/version.
 def update_status(event):
     order_id = path_order_id(event)
     body = parse_json_body(event)

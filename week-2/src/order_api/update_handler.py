@@ -1,3 +1,5 @@
+# UPDATE LAMBDA HANDLER
+# API Gateway sends PATCH /orders/{orderId}/status here.
 from .common import api_handler, update_status
 
 

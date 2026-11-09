@@ -1,9 +1,13 @@
+# LAMBDA PACKAGE
+# Zip the Python source folder so Terraform can upload the handlers to AWS Lambda.
 data "archive_file" "lambda_package" {
   type        = "zip"
   source_dir  = "${path.module}/../src"
   output_path = "${path.module}/orderflow-lambda.zip"
 }
 
+# DYNAMODB TABLE
+# Store order items. orderId is the table primary key; the GSI supports customer history.
 resource "aws_dynamodb_table" "orders" {
   name         = "${var.project_name}-orders"
   billing_mode = "PAY_PER_REQUEST"
@@ -42,6 +46,8 @@ resource "aws_dynamodb_table" "orders" {
   }
 }
 
+# LAMBDA EXECUTION ROLES
+# Each function assumes its own role to access only the AWS services it needs.
 resource "aws_iam_role" "lambda" {
   for_each = toset(["create", "read", "update", "delete"])
   name     = "${var.project_name}-${each.key}-lambda"
@@ -55,6 +61,8 @@ resource "aws_iam_role" "lambda" {
   })
 }
 
+# CLOUDWATCH LOG GROUPS
+# Create a log destination with retention for each Lambda function.
 resource "aws_cloudwatch_log_group" "lambda" {
   for_each          = toset(["create", "read", "update", "delete"])
   name              = "/aws/lambda/${var.project_name}-${each.key}"
@@ -62,6 +70,8 @@ resource "aws_cloudwatch_log_group" "lambda" {
   tags              = { Project = var.project_name }
 }
 
+# LAMBDA LOGGING POLICIES
+# Let each function write logs only to its own CloudWatch log group.
 resource "aws_iam_role_policy" "lambda_logs" {
   for_each = aws_iam_role.lambda
   name     = "${var.project_name}-${each.key}-logs"
@@ -76,6 +86,8 @@ resource "aws_iam_role_policy" "lambda_logs" {
   })
 }
 
+# LAMBDA DATABASE POLICIES
+# Give create/read/update/delete functions operation-specific DynamoDB permissions.
 resource "aws_iam_role_policy" "lambda_dynamodb" {
   for_each = aws_iam_role.lambda
   name     = "${var.project_name}-${each.key}-dynamodb"
@@ -90,6 +102,8 @@ resource "aws_iam_role_policy" "lambda_dynamodb" {
   })
 }
 
+# FUNCTION HANDLERS
+# Map each operation to its Python entry point and timeout.
 locals {
   functions = {
     create = { handler = "order_api.create_handler.handler", timeout = 10 }
@@ -99,6 +113,8 @@ locals {
   }
 }
 
+# LAMBDA FUNCTIONS
+# Deploy the four handlers with their own roles and the orders-table name.
 resource "aws_lambda_function" "orders" {
   for_each         = local.functions
   function_name    = "${var.project_name}-${each.key}"
@@ -114,6 +130,8 @@ resource "aws_lambda_function" "orders" {
   tags       = { Project = var.project_name }
 }
 
+# LAMBDA ERROR ALARMS
+# Alert in CloudWatch when any order Lambda reports an invocation error.
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   for_each            = aws_lambda_function.orders
   alarm_name          = "${each.value.function_name}-errors"
@@ -130,6 +148,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   tags                = { Project = var.project_name }
 }
 
+# LAMBDA DURATION ALARMS
+# Monitor when a Lambda invocation approaches its timeout.
 resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
   for_each            = aws_lambda_function.orders
   alarm_name          = "${each.value.function_name}-duration"
@@ -146,6 +166,8 @@ resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
   tags                = { Project = var.project_name }
 }
 
+# API GATEWAY ALARM
+# Monitor server-side (5xx) API responses.
 resource "aws_cloudwatch_metric_alarm" "api_5xx" {
   alarm_name        = "${var.project_name}-api-5xx"
   alarm_description = "One or more API Gateway requests returned a server-side error in the evaluation period."
@@ -164,6 +186,8 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx" {
   tags                = { Project = var.project_name }
 }
 
+# DYNAMODB THROTTLE ALARMS
+# Detect read/write requests throttled for the orders table.
 resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
   for_each = toset(["ReadThrottleEvents", "WriteThrottleEvents"])
 
@@ -181,6 +205,8 @@ resource "aws_cloudwatch_metric_alarm" "dynamodb_throttles" {
   tags                = { Project = var.project_name }
 }
 
+# API GATEWAY REST API
+# Public HTTPS entry point; methods below require AWS IAM authorization (SigV4).
 resource "aws_api_gateway_rest_api" "orders" {
   name        = "${var.project_name}-api"
   description = "IAM-authorized serverless order management API"
@@ -206,6 +232,8 @@ resource "aws_api_gateway_resource" "status" {
   path_part   = "status"
 }
 
+# API ROUTES
+# Connect each HTTP method/path to the matching Lambda operation.
 locals {
   api_routes = {
     create = { resource_id = aws_api_gateway_resource.orders.id, method = "POST", function = "create" }
@@ -216,6 +244,8 @@ locals {
   }
 }
 
+# AUTHENTICATED API METHODS
+# Require an authorized IAM caller for every API operation.
 resource "aws_api_gateway_method" "routes" {
   for_each      = local.api_routes
   rest_api_id   = aws_api_gateway_rest_api.orders.id
@@ -224,6 +254,8 @@ resource "aws_api_gateway_method" "routes" {
   authorization = "AWS_IAM"
 }
 
+# API-TO-LAMBDA INTEGRATIONS
+# Forward API requests to Lambda using proxy integration.
 resource "aws_api_gateway_integration" "routes" {
   for_each                = local.api_routes
   rest_api_id             = aws_api_gateway_rest_api.orders.id
@@ -234,6 +266,8 @@ resource "aws_api_gateway_integration" "routes" {
   uri                     = aws_lambda_function.orders[each.value.function].invoke_arn
 }
 
+# LAMBDA INVOKE PERMISSIONS
+# Allow API Gateway to invoke only the function used by each route.
 resource "aws_lambda_permission" "api_gateway" {
   for_each      = local.api_routes
   statement_id  = "AllowApiGateway-${each.key}"
@@ -243,6 +277,8 @@ resource "aws_lambda_permission" "api_gateway" {
   source_arn    = "${aws_api_gateway_rest_api.orders.execution_arn}/*/${each.value.method}/orders*"
 }
 
+# API DEPLOYMENT AND STAGE
+# Publish the configured routes under the v1 URL stage.
 resource "aws_api_gateway_deployment" "orders" {
   rest_api_id = aws_api_gateway_rest_api.orders.id
   triggers = {
@@ -263,6 +299,8 @@ resource "aws_api_gateway_stage" "orders" {
   tags          = { Project = var.project_name }
 }
 
+# API CALLER POLICY
+# Output permission for a trusted CLI/client to invoke these routes; no DB access.
 locals {
   caller_policy = {
     Version = "2012-10-17"
