@@ -22,6 +22,8 @@ LOG = logging.getLogger()
 LOG.setLevel(logging.INFO)
 TABLE_NAME = os.environ["ORDERS_TABLE"]
 TABLE = boto3.resource("dynamodb").Table(TABLE_NAME)
+SQS = boto3.client("sqs")
+CREATE_EVENTS_QUEUE_URL = os.environ.get("CREATE_EVENTS_QUEUE_URL")
 
 # BUSINESS RULES
 # Only these order status changes are accepted by the update operation.
@@ -98,11 +100,25 @@ def required_string(value, field, max_length=128):
     return value.strip()
 
 
+# AUTHENTICATED CUSTOMER ID
+# API Gateway's Cognito authorizer validates the token; use its trusted `sub` claim.
+def authenticated_customer_id(event):
+    request_context = event.get("requestContext") or {}
+    authorizer = request_context.get("authorizer") or {}
+    claims = authorizer.get("claims") or {}
+    customer_id = claims.get("sub")
+    if not isinstance(customer_id, str) or not customer_id.strip():
+        raise ApiError(401, "UNAUTHORIZED", "A valid customer sign-in is required.")
+    return customer_id
+
+
 # CREATE ORDER
 # Validate input, generate an order ID, then write with DynamoDB PutItem.
 def create_order(event):
+    customer_id = authenticated_customer_id(event)
     body = parse_json_body(event)
-    customer_id = required_string(body.get("customerId"), "customerId")
+    if "customerId" in body:
+        raise ApiError(400, "VALIDATION_ERROR", "Do not provide 'customerId'; it comes from the authenticated customer token.")
     items = body.get("items")
     if not isinstance(items, list) or not 1 <= len(items) <= 50:
         raise ApiError(400, "VALIDATION_ERROR", "'items' must contain between 1 and 50 entries.")
@@ -134,6 +150,21 @@ def create_order(event):
     }
     TABLE.put_item(Item=order, ConditionExpression="attribute_not_exists(orderId)")
     LOG.info("order_created orderId=%s customerId=%s", order_id, customer_id)
+    if CREATE_EVENTS_QUEUE_URL:
+        try:
+            SQS.send_message(
+                QueueUrl=CREATE_EVENTS_QUEUE_URL,
+                MessageBody=json.dumps({
+                    "eventType": "ORDER_CREATED",
+                    "orderId": order_id,
+                    "customerId": customer_id,
+                    "createdAt": now,
+                }),
+            )
+        except ClientError:
+            # The order is already durable. Preserve the successful create response;
+            # emit a recognizable log event so CloudWatch can alarm on publish failures.
+            LOG.exception("create_event_publish_failed orderId=%s", order_id)
     return 201, {"order": order}
 
 
@@ -145,10 +176,11 @@ def path_order_id(event):
 # GET ORDER BY ID
 # Read one item using the DynamoDB table's orderId primary key.
 def get_order(event):
+    customer_id = authenticated_customer_id(event)
     order_id = path_order_id(event)
     result = TABLE.get_item(Key={"orderId": order_id}, ConsistentRead=True)
     order = result.get("Item")
-    if not order:
+    if not order or order.get("customerId") != customer_id:
         raise ApiError(404, "ORDER_NOT_FOUND", "No order was found with that ID.")
     return 200, {"order": order}
 
@@ -156,11 +188,13 @@ def get_order(event):
 # DELETE ORDER
 # Permanently delete the order using orderId; return 404 if it does not exist.
 def delete_order(event):
+    customer_id = authenticated_customer_id(event)
     order_id = path_order_id(event)
     try:
         TABLE.delete_item(
             Key={"orderId": order_id},
-            ConditionExpression="attribute_exists(orderId)",
+            ConditionExpression="attribute_exists(orderId) AND customerId = :customerId",
+            ExpressionAttributeValues={":customerId": customer_id},
         )
     except ClientError as error:
         if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
@@ -198,7 +232,7 @@ def decode_token(token):
 # Query CustomerCreatedIndex by customerId instead of scanning the whole table.
 def list_orders(event):
     params = event.get("queryStringParameters") or {}
-    customer_id = required_string(params.get("customerId"), "customerId")
+    customer_id = authenticated_customer_id(event)
     try:
         limit = int(params.get("limit", "20"))
     except (TypeError, ValueError):
@@ -221,6 +255,7 @@ def list_orders(event):
 # UPDATE ORDER STATUS SAFELY
 # Validate an allowed transition, then condition the write on current status/version.
 def update_status(event):
+    customer_id = authenticated_customer_id(event)
     order_id = path_order_id(event)
     body = parse_json_body(event)
     expected = required_string(body.get("expectedStatus"), "expectedStatus", 32).upper()
@@ -237,10 +272,11 @@ def update_status(event):
         result = TABLE.update_item(
             Key={"orderId": order_id},
             UpdateExpression="SET #status = :newStatus, updatedAt = :updatedAt, #version = #version + :one",
-            ConditionExpression="attribute_exists(orderId) AND #status = :expectedStatus AND #version = :expectedVersion",
+            ConditionExpression="attribute_exists(orderId) AND customerId = :customerId AND #status = :expectedStatus AND #version = :expectedVersion",
             ExpressionAttributeNames={"#status": "status", "#version": "version"},
             ExpressionAttributeValues={
                 ":newStatus": new_status,
+                ":customerId": customer_id,
                 ":expectedStatus": expected,
                 ":expectedVersion": expected_version,
                 ":updatedAt": now,
@@ -251,7 +287,7 @@ def update_status(event):
     except ClientError as error:
         if error.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
             existing = TABLE.get_item(Key={"orderId": order_id}, ConsistentRead=True).get("Item")
-            if not existing:
+            if not existing or existing.get("customerId") != customer_id:
                 raise ApiError(404, "ORDER_NOT_FOUND", "No order was found with that ID.")
             raise ApiError(409, "STATUS_CONFLICT", "The order changed; retrieve it and retry with its current status and version.")
         raise

@@ -21,3 +21,10 @@ variable "log_retention_days" {
   type        = number
   default     = 14
 }
+
+# EMAIL FOR CLOUDWATCH ALARM NOTIFICATIONS
+# Set this in the ignored local terraform.tfvars file; do not commit a personal address.
+variable "alarm_email" {
+  description = "Email recipient for CloudWatch alarm notifications through SNS."
+  type        = string
+}
