@@ -1,7 +1,7 @@
 # API Test Results (Cognito-Authenticated)
 
-> All scenarios below were executed against the live AWS deployment (`eu-central-1`) using a verified Amazon Cognito User Pool JWT (`$idToken`) per [cognito-cli-guide.md](orderflow_cli_guide.md).
-
+> All scenarios below were executed against the live AWS deployment (`eu-central-1`) using a verified Amazon Cognito User Pool JWT (`$idToken`) per [orderflow_cli_guide.md](orderflow_cli_guide.md).
+ 
 ## Test Environment
 * **Region:** `eu-central-1`
 * **Auth Flow:** Amazon Cognito `USER_PASSWORD_AUTH` (JWT `IdToken` passed via `--token $idToken`)
